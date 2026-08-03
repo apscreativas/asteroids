@@ -28,6 +28,7 @@ const wrap  = (v, max) => ((v % max) + max) % max;
 const dist  = (a, b)   => Math.hypot(a.x - b.x, a.y - b.y);
 const rand  = (min, max) => min + Math.random() * (max - min);
 const randInt = (min, max) => Math.floor(rand(min, max + 1));
+const pick  = arr => arr[randInt(0, arr.length - 1)];
 
 // ── Bullet ────────────────────────────────────────────────────────────────────
 class Bullet {
@@ -237,17 +238,25 @@ class Particle {
   }
 }
 
-// ── PowerUp (disparo triple) ──────────────────────────────────────────────────
-const POWERUP_COLOR    = '#4de3ff';
+// ── PowerUps ──────────────────────────────────────────────────────────────────
+// Tabla única de tipos: color e etiqueta de HUD salen de acá, así el ítem que
+// flota y su contador nunca se desincronizan.
+const POWERUP_TYPES = {
+  triple: { color: '#4de3ff', hud: 'TRIPLE' },
+  shield: { color: '#8cff6a', hud: 'ESCUDO' },
+};
+const POWERUP_KINDS    = Object.keys(POWERUP_TYPES);
 const POWERUP_TTL      = 12;    // segundos en pantalla antes de desvanecerse
 const POWERUP_BLINK    = 3;     // parpadea los últimos N segundos
 const DROP_CHANCE      = 0.12;  // probabilidad por asteroide destruido
 const TRIPLE_DURATION  = 10;    // segundos de disparo triple
+const SHIELD_DURATION  = 5;     // segundos, o hasta absorber un impacto
 
 class PowerUp {
-  constructor(x, y) {
+  constructor(x, y, type) {
     this.x = x;
     this.y = y;
+    this.type = type;
     const angle = rand(0, Math.PI * 2);
     const speed = rand(15, 35);
     this.vx = Math.cos(angle) * speed;
@@ -274,7 +283,7 @@ class PowerUp {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.rot);
-    ctx.strokeStyle = POWERUP_COLOR;
+    ctx.strokeStyle = POWERUP_TYPES[this.type].color;
     ctx.lineWidth   = 1.8;
     ctx.lineJoin    = 'round';
 
@@ -289,12 +298,24 @@ class PowerUp {
     ctx.closePath();
     ctx.stroke();
 
-    // Tres trazos en abanico: el icono del disparo triple
+    // Icono interno según el tipo
     ctx.lineWidth = 1.4;
-    for (const a of [-0.5, 0, 0.5]) {
+    if (this.type === 'triple') {
+      // Tres trazos en abanico
+      for (const a of [-0.5, 0, 0.5]) {
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * 2, Math.sin(a) * 2);
+        ctx.lineTo(Math.cos(a) * 8, Math.sin(a) * 8);
+        ctx.stroke();
+      }
+    } else {
+      // Cúpula: arco con base
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * 2, Math.sin(a) * 2);
-      ctx.lineTo(Math.cos(a) * 8, Math.sin(a) * 8);
+      ctx.arc(0, 2, 7, Math.PI, 0);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-7, 2);
+      ctx.lineTo( 7, 2);
       ctx.stroke();
     }
 
@@ -309,7 +330,8 @@ let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
 let powerup;      // PowerUp | null — ítem flotante pendiente de recoger
 let powerupUsed;  // ya se recogió en este nivel (uno por nivel)
-let tripleShot;   // segundos restantes del efecto
+let tripleShot;   // segundos restantes del disparo triple
+let shield;       // segundos restantes del escudo
 
 function spawnAsteroids(count) {
   const SAFE_DIST = 130;
@@ -335,6 +357,7 @@ function initGame() {
   powerup     = null;
   powerupUsed = false;
   tripleShot  = 0;
+  shield      = 0;
   spawnAsteroids(4);
 }
 
@@ -383,6 +406,7 @@ function update(dt) {
   }
 
   if (tripleShot > 0) tripleShot -= dt;
+  if (shield     > 0) shield     -= dt;
 
   // Disparar
   if (pressed('Space')) {
@@ -407,9 +431,9 @@ function update(dt) {
         score += POINTS[a.size];
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
-        // Drop aleatorio del power-up: uno solo en pantalla, uno solo por partida
+        // Drop aleatorio: uno solo en pantalla, uno solo por nivel, tipo sorteado
         if (!powerupUsed && !powerup && Math.random() < DROP_CHANCE)
-          powerup = new PowerUp(a.x, a.y);
+          powerup = new PowerUp(a.x, a.y, pick(POWERUP_KINDS));
       }
     }
   }
@@ -420,7 +444,8 @@ function update(dt) {
   if (powerup) {
     powerup.update(dt);
     if (!ship.dead && dist(ship, powerup) < ship.radius + powerup.radius) {
-      tripleShot  = TRIPLE_DURATION;
+      if (powerup.type === 'triple') tripleShot = TRIPLE_DURATION;
+      else                           shield     = SHIELD_DURATION;
       powerupUsed = true;
       explode(powerup.x, powerup.y, 10);
       powerup = null;
@@ -433,10 +458,21 @@ function update(dt) {
   if (ship.invincible <= 0) {
     for (const a of asteroids) {
       if (dist(ship, a) < ship.radius + a.radius * 0.82) {
-        killShip();
+        if (shield > 0) {
+          // El escudo vaporiza el asteroide SIN fragmentarlo: los pedazos
+          // aparecerían encima de la nave justo al romperse el escudo.
+          a.dead = true;
+          score += POINTS[a.size];
+          explode(a.x, a.y, a.size * 6);
+          shield = 0;             // se consume con el impacto
+          ship.invincible = 1.2;  // margen para salir del cúmulo
+        } else {
+          killShip();
+        }
         break;
       }
     }
+    asteroids = asteroids.filter(a => !a.dead);
   }
 
   // Nivel completado
@@ -474,12 +510,32 @@ function drawHUD() {
   for (let i = 0; i < lives; i++)
     drawLifeIcon(W - 16 - i * 22, 18);
 
-  if (tripleShot > 0) {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = POWERUP_COLOR;
-    ctx.font = '13px monospace';
-    ctx.fillText(`TRIPLE ${Math.ceil(tripleShot)}`, W / 2, 46);
-  }
+  // Contadores de efectos activos, apilados (pueden coexistir)
+  const active = [];
+  if (tripleShot > 0) active.push(['triple', tripleShot]);
+  if (shield     > 0) active.push(['shield', shield]);
+
+  ctx.textAlign = 'center';
+  ctx.font = '13px monospace';
+  active.forEach(([kind, t], i) => {
+    const type = POWERUP_TYPES[kind];
+    ctx.fillStyle = type.color;
+    ctx.fillText(`${type.hud} ${Math.ceil(t)}`, W / 2, 46 + i * 18);
+  });
+}
+
+function drawShield() {
+  // Parpadeo de aviso en el último tramo
+  if (shield < 1.5 && Math.floor(shield * 8) % 2 === 0) return;
+
+  const pulse = 0.55 + 0.25 * Math.sin(shield * 9);
+  ctx.save();
+  ctx.strokeStyle = `rgba(140, 255, 106, ${pulse.toFixed(2)})`;
+  ctx.lineWidth   = 2;
+  ctx.beginPath();
+  ctx.arc(ship.x, ship.y, 20, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawOverlay(title, sub) {
@@ -501,6 +557,7 @@ function draw() {
   if (powerup) powerup.draw();
   bullets.forEach(b => b.draw());
   ship.draw();
+  if (shield > 0 && !ship.dead) drawShield();
 
   drawHUD();
 
