@@ -7,15 +7,25 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #000;
+      /* El fondo de la página continúa la nebulosa del canvas, así el juego
+         no queda como una estampilla pegada sobre negro plano. */
+      background:
+        radial-gradient(ellipse at 20% 15%, rgba(86, 52, 168, 0.22), transparent 55%),
+        radial-gradient(ellipse at 82% 85%, rgba(24, 92, 150, 0.20), transparent 55%),
+        #04050a;
       display: flex;
       align-items: center;
       justify-content: center;
-      height: 100vh;
+      min-height: 100vh;
     }
     canvas {
       display: block;
-      border: 1px solid #222;
+      border-radius: 10px;
+      border: 1px solid rgba(106, 168, 255, 0.22);
+      box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.6),
+        0 24px 70px rgba(0, 0, 0, 0.75),
+        0 0 90px rgba(106, 168, 255, 0.12);
     }
   </style>
 </head>
